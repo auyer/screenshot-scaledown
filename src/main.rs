@@ -1,13 +1,12 @@
-// extern crate framing;
-extern crate repng;
-extern crate scrap;
 extern crate winapi;
+extern crate image;
 
-use scrap::{Capturer, Display};
+mod screenshot;
+use std::fmt;
+use std::time::{Duration, Instant};
+use image::ImageFormat;
+use image::imageops::FilterType;
 use std::fs::File;
-use std::io::ErrorKind::WouldBlock;
-use std::thread;
-use std::time::Duration;
 
 fn main() {
 	stealth();
@@ -29,54 +28,65 @@ fn main() {
 	}
 }
 
-fn print_action() {
-	let one_second = Duration::new(1, 0);
-	let one_frame = one_second / 60;
-	let display = Display::primary().expect("Couldn't find primary display.");
-	let mut capturer = Capturer::new(display).expect("Couldn't begin capture.");
-	let (w, h) = (capturer.width(), capturer.height());
+// Remove after debug
+struct Elapsed(Duration);
+impl Elapsed {
+    fn from(start: &Instant) -> Self {
+        Elapsed(start.elapsed())
+    }
+}
 
-	loop {
-		// Wait until there's a frame.
-		let buffer = match capturer.frame() {
-			Ok(buffer) => buffer,
-			Err(error) => {
-				if error.kind() == WouldBlock {
-					// Keep spinning.
-					thread::sleep(one_frame);
-					continue;
-				} else {
-					panic!("Error: {}", error);
-				}
-			}
-		};
-
-        println!("Captured! Saving...");
-
-        // Flip the ARGB image into a BGRA image.
-
-        let mut bitflipped = Vec::with_capacity(w * h * 4);
-        let stride = buffer.len() / h;
-
-        for y in 0..h {
-            for x in 0..w {
-                let i = stride * y + 4 * x;
-                bitflipped.extend_from_slice(&[buffer[i + 2], buffer[i + 1], buffer[i], 255]);
-            }
+impl fmt::Display for Elapsed {
+    fn fmt(&self, out: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        match (self.0.as_secs(), self.0.subsec_nanos()) {
+            (0, n) if n < 1000 => write!(out, "{} ns", n),
+            (0, n) if n < 1000_000 => write!(out, "{} µs", n / 1000),
+            (0, n) => write!(out, "{} ms", n / 1000_000),
+            (s, n) if s < 10 => write!(out, "{}.{:02} s", s, n / 10_000_000),
+            (s, _) => write!(out, "{} s", s),
         }
+    }
+}
 
-        // Save the image.
+fn print_action() {
+	let s = screenshot::get_screenshot(0).unwrap();
 
-        repng::encode(
-            File::create("screenshot.png").unwrap(),
-            w as u32,
-            h as u32,
-            &bitflipped,
-        )
-        .unwrap();
+	println!("size {}", std::mem::size_of_val(&s));
 
-        println!("Image saved to `screenshot.png`.");
-        break;
+	println!("{} x {} x {} = {} bytes", s.height(), s.width(), s.pixel_width(), s.raw_len());
+
+	let origin = s.get_pixel(0, 0);
+	println!("(0,0): R: {}, G: {}, B: {}", origin.r, origin.g, origin.b);
+
+	let end_col = s.get_pixel(0, s.width()-1);
+	println!("(0,end): R: {}, G: {}, B: {}", end_col.r, end_col.g, end_col.b);
+
+	let opp = s.get_pixel(s.height()-1, s.width()-1);
+	println!("(end,end): R: {}, G: {}, B: {}", opp.r, opp.g, opp.b);
+
+
+	let mut img = image::ImageBuffer::new(s.width() as u32, s.height() as u32);
+    // Iterate over the coordinates and pixels of the image
+    for (x, y, pixel) in img.enumerate_pixels_mut() {
+		// *pixel = s.get_pixel(x as usize, y as usize);
+		let pix = s.get_pixel(y as usize, x as usize);
+	
+		*pixel = image::Rgb([pix.b, pix.g, pix.r]);
+    }
+	let img = image::DynamicImage::ImageRgb8(img);
+	let mut output = File::create(&"test.jpg").unwrap();
+	img.write_to(&mut output, ImageFormat::Jpeg).unwrap();
+	for &(name, filter) in [
+        ("tri", FilterType::Triangle),
+        ("cmr", FilterType::CatmullRom),
+        ("lcz2", FilterType::Lanczos3),
+    ].iter()
+    {
+        let timer = Instant::now();
+        let scaled = img.resize(1920, 1080, filter);
+        println!("Scaled by {} in {}", name, Elapsed::from(&timer));
+        let mut output = File::create(&format!("test-{}.png", name)).unwrap();
+        scaled.write_to(&mut output, ImageFormat::Jpeg).unwrap();
     }
 }
 

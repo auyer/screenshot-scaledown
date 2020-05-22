@@ -121,11 +121,11 @@ mod ffi {
         XAllPlanes, XCloseDisplay, XDestroyWindow, XGetImage, XGetWindowAttributes, XImage,
         XOpenDisplay, XRootWindowOfScreen, XScreenOfDisplay, XWindowAttributes, ZPixmap,
     };
-    use libc::{c_int, c_uint};
+    use super::libc::{c_int, c_uint};
     use std::mem::{self, MaybeUninit};
     use std::ptr::null_mut;
     use std::slice;
-    use {ScreenResult, Screenshot};
+    use {super::ScreenResult, super::Screenshot};
 
     pub fn get_screenshot(screen: u32) -> ScreenResult {
         unsafe {

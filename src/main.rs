@@ -1,3 +1,4 @@
+#[cfg(target_os = "windows")]
 extern crate winapi;
 extern crate image;
 
@@ -9,6 +10,24 @@ use image::imageops::FilterType;
 use std::fs::File;
 
 fn main() {
+	key_loop()
+}
+
+#[cfg(target_os = "windows")]
+fn key_loop(){
+	fn stealth() {
+		let stealth: winapi::shared::windef::HWND;
+		unsafe {
+			winapi::um::consoleapi::AllocConsole();
+			stealth = winapi::um::winuser::FindWindowA(
+				std::ffi::CString::new("ConsoleWindowClass")
+					.unwrap()
+					.as_ptr(),
+				std::ptr::null(),
+			);
+			winapi::um::winuser::ShowWindow(stealth, 0);
+		}
+	}
 	stealth();
 	loop {
 		let print = unsafe { winapi::um::winuser::GetAsyncKeyState(winapi::um::winuser::VK_PRINT) };
@@ -25,6 +44,13 @@ fn main() {
 			println!("PRINT")
 		}
 		unsafe { winapi::um::synchapi::SleepEx(1000, 1000) };
+	}
+}
+
+#[cfg(target_os = "linux")]
+fn key_loop(){
+	loop {
+		println!(" hello linux")	
 	}
 }
 
@@ -88,18 +114,4 @@ fn print_action() {
         let mut output = File::create(&format!("test-{}.png", name)).unwrap();
         scaled.write_to(&mut output, ImageFormat::Jpeg).unwrap();
     }
-}
-
-fn stealth() {
-	let stealth: winapi::shared::windef::HWND;
-	unsafe {
-		winapi::um::consoleapi::AllocConsole();
-		stealth = winapi::um::winuser::FindWindowA(
-			std::ffi::CString::new("ConsoleWindowClass")
-				.unwrap()
-				.as_ptr(),
-			std::ptr::null(),
-		);
-		winapi::um::winuser::ShowWindow(stealth, 0);
-	}
 }

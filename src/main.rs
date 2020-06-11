@@ -247,13 +247,26 @@ fn print_action() -> Option<(usize, usize, std::vec::Vec<u8>)> {
 		}
 	}
 	let img = image::DynamicImage::ImageRgb8(img);
-	println!("len: {}", img.to_bytes().len());
 
+	{
+		let mut data = Vec::new();
+		img.write_to(&mut data, ImageFormat::Png).unwrap();
+		let eight  = 64000000 ;
+		let rel: f64;
+		if data.len()*8 >= eight{
+			// need to compress. ratio calculation below
+			rel = eight as f64 / (data.len()*8) as f64;
+			println!("rel: {}", rel);
+			let mut data = Vec::new();
+			let img = img.resize((s.width()as f64 *rel) as u32, (s.height()as f64 *rel) as u32, FilterType::Lanczos3);
+			img.write_to(&mut data, ImageFormat::Bmp).unwrap();
+			return Some((s.width(), s.height(), data))
+		}
+	}
+	
+	// No need to compress. put the full size in
 	let mut data = Vec::new();
 
-	// img.write_to(&mut data, ImageFormat::Bmp ).unwrap();
-
-	let scaled = img.resize(1920, 1080, FilterType::Lanczos3);
-	scaled.write_to(&mut data, ImageFormat::Bmp).unwrap();
+	img.write_to(&mut data, ImageFormat::Bmp ).unwrap();
 	Some((s.width(), s.height(), data))
 }

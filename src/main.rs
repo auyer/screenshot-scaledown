@@ -1,25 +1,39 @@
 #[cfg(target_os = "windows")]
 extern crate winapi;
 
+#[cfg(target_os = "windows")]
+extern crate clipboard_win;
+
 #[cfg(target_os = "linux")]
 extern crate x11rb;
 
-extern crate livesplit_hotkey;
 extern crate image;
+extern crate livesplit_hotkey;
+extern crate scopeguard;
+
+extern crate libc;
 
 mod screenshot;
 use image::imageops::FilterType;
 use image::ImageFormat;
+use scopeguard::defer;
 use std::fmt;
-use std::fs::File;
+use std::io::Error;
+use std::ptr;
 use std::time::{Duration, Instant};
-use std::{thread, time};
+
 fn main() {
 	key_loop()
 }
 
 #[cfg(target_os = "windows")]
 fn key_loop() {
+	fn is_or_was_just_pressed(key: i16) -> bool {
+		if key == -32767 || key == -32768 || key == 1 {
+			return true;
+		}
+		false
+	}
 	fn stealth() {
 		let stealth: winapi::shared::windef::HWND;
 		unsafe {
@@ -35,35 +49,43 @@ fn key_loop() {
 	}
 	stealth();
 	loop {
+		let lshift =
+			unsafe { winapi::um::winuser::GetAsyncKeyState(winapi::um::winuser::VK_LSHIFT) };
+		let rshift =
+			unsafe { winapi::um::winuser::GetAsyncKeyState(winapi::um::winuser::VK_RSHIFT) };
 		let print = unsafe { winapi::um::winuser::GetAsyncKeyState(winapi::um::winuser::VK_PRINT) };
 		let snapshot =
 			unsafe { winapi::um::winuser::GetAsyncKeyState(winapi::um::winuser::VK_SNAPSHOT) };
-		if print == -32767
-			|| print == -32768
-			|| print == 1
-			|| snapshot == -32767
-			|| snapshot == -32768
-			|| snapshot == 1
+		// shadow both shifts with booleans, because they will be used twice
+		let lshift = is_or_was_just_pressed(lshift);
+		let rshift = is_or_was_just_pressed(rshift);
+
+		if (is_or_was_just_pressed(print) && (rshift || lshift))
+			|| (is_or_was_just_pressed(snapshot) && (rshift || lshift))
 		{
-			print_action();
-			println!("PRINT")
+			let (_, _, data) = print_action().unwrap();
+
+			let img = clipboard_win::image::Image { bytes: data };
+
+			let clip = clipboard_win::Clipboard::new().unwrap();
+			clip.set_bitmap(&img).unwrap();
 		}
-		unsafe { winapi::um::synchapi::SleepEx(1000, 1000) };
+		unsafe { winapi::um::synchapi::SleepEx(10, 0) };
 	}
 }
 
 #[cfg(target_os = "linux")]
 fn key_loop() {
 	let hook = livesplit_hotkey::linux::Hook::new().unwrap();
-	hook.register(livesplit_hotkey::KeyCode::Print, print_action).unwrap();
-	loop{
+	hook.register(livesplit_hotkey::KeyCode::Print, print_action)
+		.unwrap();
+	loop {
 		thread::sleep(time::Duration::from_secs(10));
 	}
 }
 
 // #[cfg(target_os = "linux")]
 // fn key_loop() {
-
 
 // 	use x11rb::connection::{Connection, SequenceNumber};
 // 	use x11rb::errors::{ConnectionError, ReplyError, ReplyOrIdError};
@@ -89,7 +111,6 @@ fn key_loop() {
 // 			(Button4, "Button4"),
 // 			(Button5, "Button5"),
 // 		];
-	
 // 		let active = mods
 // 			.iter()
 // 			.filter(|(m, _)| mask & u16::from(*m) != 0) // FIXME: This should be made nicer
@@ -189,28 +210,7 @@ fn key_loop() {
 // 	}
 // }
 
-
-// Remove after debug
-struct Elapsed(Duration);
-impl Elapsed {
-	fn from(start: &Instant) -> Self {
-		Elapsed(start.elapsed())
-	}
-}
-
-impl fmt::Display for Elapsed {
-	fn fmt(&self, out: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-		match (self.0.as_secs(), self.0.subsec_nanos()) {
-			(0, n) if n < 1000 => write!(out, "{} ns", n),
-			(0, n) if n < 1000_000 => write!(out, "{} µs", n / 1000),
-			(0, n) => write!(out, "{} ms", n / 1000_000),
-			(s, n) if s < 10 => write!(out, "{}.{:02} s", s, n / 10_000_000),
-			(s, _) => write!(out, "{} s", s),
-		}
-	}
-}
-
-fn print_action() {
+fn print_action() -> Option<(usize, usize, std::vec::Vec<u8>)> {
 	let s = screenshot::get_screenshot(0).unwrap();
 
 	println!("size {}", std::mem::size_of_val(&s));
@@ -240,26 +240,20 @@ fn print_action() {
 	for (x, y, pixel) in img.enumerate_pixels_mut() {
 		// *pixel = s.get_pixel(x as usize, y as usize);
 		let pix = s.get_pixel(y as usize, x as usize);
-		if cfg!(windows){
+		if cfg!(windows) {
 			*pixel = image::Rgb([pix.b, pix.g, pix.r]);
 		} else {
 			*pixel = image::Rgb([pix.r, pix.g, pix.b]);
 		}
 	}
 	let img = image::DynamicImage::ImageRgb8(img);
-	let mut output = File::create(&"test.jpg").unwrap();
-	img.write_to(&mut output, ImageFormat::Jpeg).unwrap();
-	for &(name, filter) in [
-		("tri", FilterType::Triangle),
-		("cmr", FilterType::CatmullRom),
-		("lcz2", FilterType::Lanczos3),
-	]
-	.iter()
-	{
-		let timer = Instant::now();
-		let scaled = img.resize(1920, 1080, filter);
-		println!("Scaled by {} in {}", name, Elapsed::from(&timer));
-		let mut output = File::create(&format!("test-{}.png", name)).unwrap();
-		scaled.write_to(&mut output, ImageFormat::Jpeg).unwrap();
-	}
+	println!("len: {}", img.to_bytes().len());
+
+	let mut data = Vec::new();
+
+	// img.write_to(&mut data, ImageFormat::Bmp ).unwrap();
+
+	let scaled = img.resize(1920, 1080, FilterType::Lanczos3);
+	scaled.write_to(&mut data, ImageFormat::Bmp).unwrap();
+	Some((s.width(), s.height(), data))
 }

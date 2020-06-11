@@ -13,7 +13,6 @@
 //! The Windows GDI bitmap has its coordinate origin at the bottom left. We
 //! attempt to undo this by reordering the rows. Windows also uses ARGB pixels.
 
-#![allow(unused_assignments)]
 
 extern crate libc;
 
